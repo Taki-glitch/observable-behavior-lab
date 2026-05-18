@@ -48,6 +48,18 @@ class BehaviorCamera:
         self.history = deque(maxlen=history_seconds * 4)
         self.events = deque(maxlen=12)
         self.last_event_times = {}
+        self.session = self._new_session(active=False)
+
+    def _new_session(self, active):
+        now = time.time()
+        return {
+            "active": active,
+            "started_at": now if active else None,
+            "stopped_at": None,
+            "samples": [],
+            "events": [],
+            "summary": "Session Summary\n----------------\n\nWaiting for session samples.",
+        }
 
     def open(self):
         """Open camera and MediaPipe resources lazily."""
@@ -105,7 +117,7 @@ class BehaviorCamera:
             return buffer.tobytes()
 
     def snapshot(self):
-        """Return the latest metrics, timeline history, events, and session summary."""
+        """Return the latest metrics, timeline history, events, session state, and summary."""
         with self.lock:
             return {
                 "metrics": dict(self.current_metrics),
@@ -113,6 +125,31 @@ class BehaviorCamera:
                 "events": list(self.events),
                 "summary": self._summary_locked(),
                 "duration": round(time.time() - self.started_at, 1),
+                "session": self._session_payload_locked(),
+            }
+
+    def start_session(self):
+        """Start a fresh server-side analysis session."""
+        with self.lock:
+            self.session = self._new_session(active=True)
+            return self._session_payload_locked()
+
+    def stop_session(self):
+        """Stop the active server-side session and finalize its summary."""
+        with self.lock:
+            if self.session["active"]:
+                self.session["active"] = False
+                self.session["stopped_at"] = time.time()
+            self.session["summary"] = self._session_summary_locked()
+            return self._session_payload_locked()
+
+    def export_session(self):
+        """Return a JSON-serializable report for the latest server-side session."""
+        with self.lock:
+            return {
+                "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "source": "server-mediapipe",
+                **self._session_payload_locked(include_samples=True),
             }
 
     def _calculate_fps(self):
@@ -145,6 +182,10 @@ class BehaviorCamera:
             for key in self.metric_totals:
                 self.metric_totals[key] += metrics[key]
             self._record_observations_locked(metrics, timestamp)
+            if self.session["active"]:
+                self.session["samples"].append(sample | {"timestamp": timestamp})
+                self.session["events"] = list(self.events)
+                self.session["summary"] = self._session_summary_locked()
 
     def _record_observations_locked(self, metrics, timestamp):
         if metrics["movement"] >= 65:
@@ -174,6 +215,48 @@ class BehaviorCamera:
             return "Session Summary\n----------------\n\nWaiting for live camera metrics."
         averages = {name: total / self.frame_count for name, total in self.metric_totals.items()}
         return generate_session_summary(averages["movement"], averages["posture"], averages["head"])
+
+    def _session_summary_locked(self):
+        samples = self.session["samples"]
+        if not samples:
+            return "Session Summary\n----------------\n\nNo samples captured yet."
+        totals = {"movement": 0.0, "posture": 0.0, "head": 0.0, "confidence": 0.0}
+        for sample in samples:
+            for key in totals:
+                totals[key] += sample[key]
+        averages = {key: value / len(samples) for key, value in totals.items()}
+        duration = self._session_duration_locked()
+        base_summary = generate_session_summary(averages["movement"], averages["posture"], averages["head"])
+        return "\n".join(
+            [
+                base_summary,
+                "",
+                f"Duration: {duration:.1f} seconds",
+                f"Samples: {len(samples)}",
+                f"Confidence Average: {averages['confidence']:.1f}/100",
+            ]
+        )
+
+    def _session_duration_locked(self):
+        started_at = self.session["started_at"]
+        if not started_at:
+            return 0.0
+        stopped_at = self.session["stopped_at"] or time.time()
+        return stopped_at - started_at
+
+    def _session_payload_locked(self, include_samples=False):
+        payload = {
+            "active": self.session["active"],
+            "started_at": self.session["started_at"],
+            "stopped_at": self.session["stopped_at"],
+            "duration": round(self._session_duration_locked(), 1),
+            "sample_count": len(self.session["samples"]),
+            "events": list(self.session["events"]),
+            "summary": self.session["summary"],
+        }
+        if include_samples:
+            payload["samples"] = list(self.session["samples"])
+        return payload
 
     def _draw_feed_label(self, frame, confidence_score):
         label = f"Live analysis | confidence {confidence_score:.0f}/100"
@@ -210,7 +293,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if route == "/api/summary":
             self._serve_json({"summary": self.camera.snapshot()["summary"]})
             return
+        if route == "/api/session/export":
+            self._serve_json(self.camera.export_session())
+            return
         self._serve_static_file(route.lstrip("/"))
+
+    def do_POST(self):
+        route = urlparse(self.path).path
+        if route == "/api/session/start":
+            self._serve_json(self.camera.start_session())
+            return
+        if route == "/api/session/stop":
+            self._serve_json(self.camera.stop_session())
+            return
+        self.send_error(404, "Endpoint not found")
 
     def log_message(self, format, *args):
         """Keep the console focused on explicit server messages."""

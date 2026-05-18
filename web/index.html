@@ -12,24 +12,44 @@
         <div>
           <p class="eyebrow">Behavior Analysis Dashboard</p>
           <h1>Observable Behavior Lab</h1>
+          <p class="header-note">Site responsive : caméra du navigateur ou flux serveur MediaPipe.</p>
         </div>
-        <div class="session-pill">
+        <div class="session-pill" id="sessionStatusPill">
           <span class="pulse"></span>
-          <span id="sessionDuration">Session 0.0s</span>
+          <span id="sessionDuration">Session inactive</span>
         </div>
       </header>
+
+      <section class="panel controls-panel">
+        <div class="control-group">
+          <p class="eyebrow">Camera source</p>
+          <button id="deviceModeButton" class="control-button primary" type="button">Use this device camera</button>
+          <button id="serverModeButton" class="control-button" type="button">Use server camera</button>
+        </div>
+        <div class="control-group">
+          <p class="eyebrow">Analysis session</p>
+          <button id="startSessionButton" class="control-button success" type="button">Start Session</button>
+          <button id="stopSessionButton" class="control-button danger" type="button" disabled>Stop Session</button>
+          <button id="exportReportButton" class="control-button" type="button" disabled>Export Report</button>
+        </div>
+        <p id="platformHint" class="platform-hint">
+          Mode navigateur recommandé pour téléphone, tablette et ordinateur : aucune webcam Python locale n'est nécessaire côté utilisateur.
+        </p>
+      </section>
 
       <section class="hero-grid">
         <article class="panel video-panel">
           <div class="panel-heading">
             <div>
               <p class="eyebrow">Live webcam</p>
-              <h2>Skeleton + FaceMesh overlay</h2>
+              <h2 id="videoTitle">Device camera + visual overlays</h2>
             </div>
-            <span class="status-badge">LIVE</span>
+            <span id="sourceBadge" class="status-badge">DEVICE</span>
           </div>
           <div class="video-frame">
-            <img id="videoFeed" src="/video_feed" alt="Flux webcam analysé en direct" />
+            <img id="videoFeed" class="server-feed hidden" src="/video_feed" alt="Flux webcam analysé en direct" />
+            <video id="deviceVideo" class="hidden" autoplay playsinline muted></video>
+            <canvas id="deviceCanvas" class="device-canvas"></canvas>
             <div class="scan-line"></div>
           </div>
         </article>
@@ -43,6 +63,10 @@
             <span id="fpsBadge" class="status-badge muted">FPS --</span>
           </div>
           <div id="metricCards" class="metric-cards"></div>
+          <div class="session-stats">
+            <span id="sampleCount">0 samples</span>
+            <span id="activeSource">Source: device</span>
+          </div>
         </aside>
       </section>
 
@@ -59,6 +83,36 @@
           </div>
         </div>
         <canvas id="timelineCanvas" height="230"></canvas>
+      </section>
+
+      <section class="visual-grid">
+        <article class="panel visual-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Movement heatmap</p>
+              <h2>Zones les plus mobiles</h2>
+            </div>
+          </div>
+          <canvas id="heatmapCanvas" height="190"></canvas>
+        </article>
+        <article class="panel visual-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Head trace</p>
+              <h2>Trajectoire tête / regard</h2>
+            </div>
+          </div>
+          <canvas id="headTraceCanvas" height="190"></canvas>
+        </article>
+        <article class="panel visual-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Posture view</p>
+              <h2>Ouverture / fermeture</h2>
+            </div>
+          </div>
+          <canvas id="postureCanvas" height="190"></canvas>
+        </article>
       </section>
 
       <section class="bottom-grid">
@@ -79,7 +133,7 @@
               <h2>Session Summary</h2>
             </div>
           </div>
-          <pre id="sessionSummary">Initialisation du rapport...</pre>
+          <pre id="sessionSummary">Démarre une session pour générer un rapport exportable.</pre>
         </article>
       </section>
     </main>
