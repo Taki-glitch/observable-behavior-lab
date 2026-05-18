@@ -1,0 +1,2 @@
+# observable-behavior-lab
+behavior-project/ │ ├── main.py ├── requirements.txt ├── README.md │ ├── detectors/ │   ├── pose_detector.py │   ├── face_detector.py │ ├── metrics/ │   ├── posture.py │   ├── movement.py │   ├── gaze.py │ ├── reports/ │   ├── generator.py │ ├── utils/ │   ├── drawing.py │ └── data/
