@@ -1,14 +1,15 @@
 # Observable Behavior Lab
 
-Prototype V3 de tableau de bord d'analyse comportementale en temps réel avec webcam, OpenCV, MediaPipe et interface web responsive.
+Prototype V4 de tableau de bord d'analyse comportementale en temps réel avec webcam, MediaPipe Web et interface responsive compatible GitHub Pages.
 
 ## Objectif du prototype
 
 Le projet devient une interface de laboratoire, pas une simple fenêtre webcam :
 
 - flux vidéo live dans un dashboard web ;
-- mode **caméra navigateur** pour téléphone, tablette et ordinateur ;
-- mode **caméra serveur** pour utiliser les détecteurs Python MediaPipe ;
+- mode **caméra navigateur + MediaPipe Web** pour téléphone, tablette et ordinateur ;
+- hébergement statique possible sur GitHub Pages sans serveur Python ;
+- mode **caméra serveur** conservé comme option locale avancée pour utiliser les détecteurs Python MediaPipe ;
 - pipeline séparé entre détection, mesures, observations prudentes et rapport explicable ;
 - cartes de métriques temps réel avec jauges animées ;
 - smoothing temporel pour réduire le bruit frame-to-frame ;
@@ -26,12 +27,14 @@ Le projet décrit uniquement des signaux observables. Il ne produit pas d'interp
 
 ## Pipeline d'analyse
 
-Le code est volontairement découpé en quatre couches :
+Le code est volontairement découpé en couches explicites :
 
-1. **Détection** (`detectors/`) : MediaPipe détecte les landmarks corps et visage.
-2. **Mesures** (`metrics/`) : les landmarks sont transformés en scores numériques normalisés, calibrés et lissés.
-3. **Observations** (`observations/`) : un moteur descriptif transforme les scores en messages prudents comme `High upper-body movement observed.`.
-4. **Rapport** (`reports/`) : le résumé textuel explique les scores et observations sans inférer d'émotions.
+1. **Détection web** (`web/detectors/`) : MediaPipe Tasks Vision JS détecte les landmarks corps et visage directement dans le navigateur.
+2. **Mesures web** (`web/metrics/`) : les landmarks JavaScript sont transformés en scores normalisés, calibrés et lissés.
+3. **Détection serveur optionnelle** (`detectors/`) : la pile Python MediaPipe reste disponible pour un usage local avancé.
+4. **Mesures serveur optionnelles** (`metrics/`) : les landmarks Python suivent les mêmes principes de calibration, normalisation et smoothing.
+5. **Observations** (`observations/`) : un moteur descriptif transforme les scores en messages prudents comme `High upper-body movement observed.`.
+6. **Rapport** (`reports/` et export navigateur) : le résumé textuel explique les scores et observations sans inférer d'émotions.
 
 Les hypothèses prudentes existent uniquement comme aide optionnelle basse confiance. Elles ne sont pas activées dans le résumé par défaut.
 
@@ -43,7 +46,8 @@ behavior-project/
 ├── server.py
 ├── requirements.txt
 ├── README.md
-├── detectors/
+├── index.html
+├── detectors/                  # option serveur Python
 │   ├── pose_detector.py
 │   └── face_detector.py
 ├── metrics/
@@ -59,14 +63,37 @@ behavior-project/
 │   └── generator.py
 ├── utils/
 │   └── drawing.py
-├── web/
+├── web/                         # application statique GitHub Pages
 │   ├── index.html
 │   ├── styles.css
-│   └── app.js
+│   ├── app.js
+│   ├── detectors/
+│   │   ├── pose.js
+│   │   └── face.js
+│   └── metrics/
+│       └── landmarkMetrics.js
 └── data/
 ```
 
-## Installation locale
+
+## Déploiement GitHub Pages
+
+Le projet peut maintenant fonctionner comme site statique :
+
+1. publier la branche sur GitHub Pages ;
+2. ouvrir l'URL du site ;
+3. cliquer sur **Use this device camera** ;
+4. autoriser la webcam dans le navigateur.
+
+Dans ce mode, le navigateur exécute directement :
+
+```text
+Webcam API → MediaPipe Tasks Vision JS → Canvas overlays → Metrics JS → Dashboard → Export local
+```
+
+Aucune installation Python n'est nécessaire pour les visiteurs. Le mode Python reste utile uniquement pour le développement local ou des expérimentations serveur.
+
+## Installation locale optionnelle pour le mode serveur Python
 
 ### Windows
 
@@ -115,6 +142,7 @@ Pour un accès depuis un autre appareil, héberger le dossier `web/` ou le serve
 
 - **Start Session** remet à zéro les samples et commence l'enregistrement des métriques.
 - **Stop Session** fige la session et génère un résumé descriptif.
+- Les sessions terminées gardent aussi un résumé court dans `localStorage` pour l’historique local du navigateur.
 - **Export Report** télécharge un fichier JSON contenant :
   - timestamps ;
   - scores ;
@@ -122,11 +150,11 @@ Pour un accès depuis un autre appareil, héberger le dossier `web/` ou le serve
   - résumé ;
   - captures PNG de la timeline, de la heatmap, de la trace tête/regard et de la vue posture.
 
-## Métriques V3
+## Métriques V4
 
-- **Movement activity** : variation moyenne des pixels ou landmarks entre deux frames, calibrée sur un bruit de baseline puis lissée.
-- **Posture openness** : distance normalisée entre les épaules côté serveur, ou proxy visuel d'ouverture en mode navigateur.
-- **Head stability** : stabilité approximative de la pointe du nez côté serveur, ou stabilité de la trajectoire de mouvement en mode navigateur.
+- **Movement activity** : variation moyenne des landmarks MediaPipe Web ou Python entre deux frames, calibrée sur un bruit de baseline puis lissée.
+- **Posture openness** : distance normalisée entre les épaules détectées par MediaPipe Web ou par le serveur Python.
+- **Head stability** : stabilité approximative de la pointe du nez Face Landmarker côté navigateur ou serveur.
 - **Confidence** : signal technique indiquant si les landmarks ou le signal vidéo sont exploitables.
 
 Ces métriques sont des indicateurs techniques de prototype. Elles devront être calibrées avant tout usage sérieux.

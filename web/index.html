@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Observable Behavior Lab</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="dashboard-shell">
@@ -48,7 +48,7 @@
             <span id="sourceBadge" class="status-badge">DEVICE</span>
           </div>
           <div class="video-frame">
-            <img id="videoFeed" class="server-feed hidden" src="/video_feed" alt="Flux webcam analysé en direct" />
+            <img id="videoFeed" class="server-feed hidden" data-server-src="/video_feed" alt="Flux webcam analysé en direct" />
             <video id="deviceVideo" class="hidden" autoplay playsinline muted></video>
             <canvas id="deviceCanvas" class="device-canvas"></canvas>
             <div class="scan-line"></div>
@@ -140,6 +140,6 @@
       </section>
     </main>
 
-    <script src="/app.js" type="module"></script>
+    <script src="./app.js" type="module"></script>
   </body>
 </html>

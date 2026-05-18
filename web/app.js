@@ -1,3 +1,7 @@
+import { createFaceDetector, drawFaceLandmarks } from "./detectors/face.js";
+import { createPoseDetector, drawPoseLandmarks } from "./detectors/pose.js";
+import { createLandmarkMetricsEngine } from "./metrics/landmarkMetrics.js";
+
 const metricDefinitions = [
   { key: "movement", label: "Movement Activity", color: "var(--movement)" },
   { key: "posture", label: "Posture Openness", color: "var(--posture)" },
@@ -36,6 +40,7 @@ const exportReportButton = document.querySelector("#exportReportButton");
 const calibrateButton = document.querySelector("#calibrateButton");
 const calibrationStatus = document.querySelector("#calibrationStatus");
 
+const LOCAL_REPORTS_KEY = "observableBehaviorReports";
 const cards = new Map();
 const offscreenCanvas = document.createElement("canvas");
 const offscreenContext = offscreenCanvas.getContext("2d", { willReadFrequently: true });
@@ -50,6 +55,12 @@ const lastEventTimes = new Map();
 let mode = "device";
 let mediaStream = null;
 let previousGrayFrame = null;
+let poseDetector = null;
+let faceDetector = null;
+let mediaPipeReady = false;
+let mediaPipeInitializing = false;
+let latestLandmarkCalibration = null;
+const landmarkMetrics = createLandmarkMetricsEngine();
 let animationFrame = null;
 let previousFrameTime = performance.now();
 let currentMetrics = { movement: 0, posture: 0, head: 0, confidence: 0, fps: 0 };
@@ -103,6 +114,7 @@ async function useDeviceCamera() {
     await deviceVideo.play();
     previousGrayFrame = null;
     previousFrameTime = performance.now();
+    await initializeMediaPipeWeb();
     cancelAnimationFrame(animationFrame);
     animationFrame = requestAnimationFrame(processDeviceFrame);
     platformHint.textContent = "Caméra navigateur active : compatible téléphone, tablette et ordinateur sur HTTPS ou localhost.";
@@ -158,8 +170,10 @@ function processDeviceFrame(now) {
   const elapsed = Math.max(now - previousFrameTime, 1);
   previousFrameTime = now;
   const fps = 1000 / elapsed;
-  const analysis = analyzeDeviceMotion();
-  currentMetrics = smoothMetricSnapshot({ ...analysis.metrics, fps });
+  const proxyAnalysis = analyzeDeviceMotion();
+  const landmarkAnalysis = runMediaPipeAnalysis(now);
+  const analysis = landmarkAnalysis ?? proxyAnalysis;
+  currentMetrics = landmarkAnalysis ? { ...landmarkAnalysis.metrics, fps } : smoothMetricSnapshot({ ...proxyAnalysis.metrics, fps });
 
   drawDeviceOverlays(analysis);
   pushRuntimeSample(currentMetrics);
@@ -171,6 +185,42 @@ function processDeviceFrame(now) {
   updateSessionUi();
 
   animationFrame = requestAnimationFrame(processDeviceFrame);
+}
+
+async function initializeMediaPipeWeb() {
+  if (mediaPipeReady || mediaPipeInitializing) return;
+  mediaPipeInitializing = true;
+  platformHint.textContent = "Chargement MediaPipe Web dans le navigateur...";
+  try {
+    [poseDetector, faceDetector] = await Promise.all([createPoseDetector(), createFaceDetector()]);
+    mediaPipeReady = true;
+    platformHint.textContent = "MediaPipe Web actif : landmarks corps + visage calculés localement dans le navigateur.";
+  } catch (error) {
+    mediaPipeReady = false;
+    platformHint.textContent = `MediaPipe Web indisponible (${error.message}). Analyse visuelle proxy utilisée.`;
+  } finally {
+    mediaPipeInitializing = false;
+  }
+}
+
+function runMediaPipeAnalysis(timestampMs) {
+  if (!mediaPipeReady || !poseDetector || !faceDetector) return null;
+  const poseResult = poseDetector.detect(deviceVideo, timestampMs);
+  const faceResult = faceDetector.detect(deviceVideo, timestampMs);
+  const poseLandmarks = poseResult.landmarks ?? [];
+  const faceLandmarks = faceResult.faceLandmarks ?? [];
+  const computed = landmarkMetrics.compute(poseLandmarks, faceLandmarks);
+  latestLandmarkCalibration = computed.calibration;
+  updateCalibrationStatus();
+  if (!computed.metrics) return null;
+  return {
+    metrics: computed.metrics,
+    poseLandmarks: poseLandmarks[0] ?? null,
+    faceLandmarks: faceLandmarks[0] ?? null,
+    centerX: poseLandmarks[0]?.[0]?.x ?? activePosture.centerX,
+    centerY: poseLandmarks[0]?.[0]?.y ?? activePosture.centerY,
+    spread: computed.calibration.shoulderBaseline || activePosture.spread,
+  };
 }
 
 function analyzeDeviceMotion() {
@@ -229,6 +279,8 @@ function drawDeviceOverlays(analysis) {
   const width = deviceCanvas.clientWidth;
   const height = deviceCanvas.clientHeight || deviceCanvas.clientWidth * 0.5625;
   drawHeatmapOverlay(deviceContext, width, height, 0.34);
+  if (analysis.poseLandmarks) drawPoseLandmarks(deviceContext, analysis.poseLandmarks, width, height);
+  if (analysis.faceLandmarks) drawFaceLandmarks(deviceContext, analysis.faceLandmarks, width, height);
   drawHeadTraceOnContext(deviceContext, width, height);
   drawPostureGuide(deviceContext, width, height, analysis);
   deviceContext.fillStyle = "rgba(8, 12, 24, 0.82)";
@@ -308,6 +360,7 @@ function stopSession() {
   exportReportButton.disabled = session.samples.length === 0;
   sessionStatusPill.classList.remove("recording");
   sessionSummary.textContent = session.summary;
+  persistSessionReport(session);
   postSessionCommand("/api/session/stop");
 }
 
@@ -335,6 +388,22 @@ function exportReport() {
   anchor.download = `behavior-session-${new Date().toISOString().replaceAll(":", "-")}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function persistSessionReport(completedSession) {
+  if (!completedSession.samples.length) return;
+  const existingReports = JSON.parse(localStorage.getItem(LOCAL_REPORTS_KEY) || "[]");
+  existingReports.unshift({
+    savedAt: new Date().toISOString(),
+    source: completedSession.source,
+    startedAt: completedSession.startedAt,
+    stoppedAt: completedSession.stoppedAt,
+    durationSeconds: sessionDurationSeconds(completedSession),
+    sampleCount: completedSession.samples.length,
+    summary: completedSession.summary,
+    observations: completedSession.events,
+  });
+  localStorage.setItem(LOCAL_REPORTS_KEY, JSON.stringify(existingReports.slice(0, 20)));
 }
 
 async function postSessionCommand(path) {
@@ -420,6 +489,8 @@ function updateBrowserCalibration(rawMovement, postureSpread) {
 
 function resetBrowserCalibration() {
   browserCalibration = { movementNoise: 0, postureSpread: activePosture.spread, samples: 0, ready: false };
+  latestLandmarkCalibration = null;
+  landmarkMetrics.reset();
   smoothedMetrics = { movement: 0, posture: 50, head: 100, confidence: 0, fps: 0 };
   fetch("/api/calibration/reset", { method: "POST" }).catch(() => {});
   updateCalibrationStatus();
@@ -431,9 +502,15 @@ function updateCalibrationStatus(serverCalibration = null) {
     calibrationStatus.textContent = `Calibration: ${readyCount}/3 server baselines ready`;
     return;
   }
+  if (mediaPipeReady && latestLandmarkCalibration) {
+    calibrationStatus.textContent = latestLandmarkCalibration.ready
+      ? "Calibration: MediaPipe Web baseline ready"
+      : `Calibration: MediaPipe Web baseline ${latestLandmarkCalibration.samples}/45`;
+    return;
+  }
   calibrationStatus.textContent = browserCalibration.ready
-    ? "Calibration: browser baseline ready"
-    : `Calibration: collecting baseline ${browserCalibration.samples}/45`;
+    ? "Calibration: browser proxy baseline ready"
+    : `Calibration: collecting proxy baseline ${browserCalibration.samples}/45`;
 }
 
 function normalizeRange(value, minimum, maximum) {
