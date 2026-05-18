@@ -31,6 +31,7 @@
           <button id="startSessionButton" class="control-button success" type="button">Start Session</button>
           <button id="stopSessionButton" class="control-button danger" type="button" disabled>Stop Session</button>
           <button id="exportReportButton" class="control-button" type="button" disabled>Export Report</button>
+          <button id="calibrateButton" class="control-button" type="button">Calibrate Baseline</button>
         </div>
         <p id="platformHint" class="platform-hint">
           Mode navigateur recommandé pour téléphone, tablette et ordinateur : aucune webcam Python locale n'est nécessaire côté utilisateur.
@@ -66,6 +67,7 @@
           <div class="session-stats">
             <span id="sampleCount">0 samples</span>
             <span id="activeSource">Source: device</span>
+            <span id="calibrationStatus">Calibration: collecting baseline</span>
           </div>
         </aside>
       </section>

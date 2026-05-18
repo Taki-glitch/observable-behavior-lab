@@ -33,6 +33,8 @@ const serverModeButton = document.querySelector("#serverModeButton");
 const startSessionButton = document.querySelector("#startSessionButton");
 const stopSessionButton = document.querySelector("#stopSessionButton");
 const exportReportButton = document.querySelector("#exportReportButton");
+const calibrateButton = document.querySelector("#calibrateButton");
+const calibrationStatus = document.querySelector("#calibrationStatus");
 
 const cards = new Map();
 const offscreenCanvas = document.createElement("canvas");
@@ -51,6 +53,8 @@ let previousGrayFrame = null;
 let animationFrame = null;
 let previousFrameTime = performance.now();
 let currentMetrics = { movement: 0, posture: 0, head: 0, confidence: 0, fps: 0 };
+let smoothedMetrics = { movement: 0, posture: 50, head: 100, confidence: 0, fps: 0 };
+let browserCalibration = { movementNoise: 0, postureSpread: 0.35, samples: 0, ready: false };
 let activePosture = { centerX: 0.5, centerY: 0.42, spread: 0.35 };
 let session = createEmptySession();
 
@@ -155,7 +159,7 @@ function processDeviceFrame(now) {
   previousFrameTime = now;
   const fps = 1000 / elapsed;
   const analysis = analyzeDeviceMotion();
-  currentMetrics = { ...analysis.metrics, fps };
+  currentMetrics = smoothMetricSnapshot({ ...analysis.metrics, fps });
 
   drawDeviceOverlays(analysis);
   pushRuntimeSample(currentMetrics);
@@ -202,14 +206,16 @@ function analyzeDeviceMotion() {
   }
 
   previousGrayFrame = grayFrame;
-  const movement = clamp((totalDiff / grayFrame.length) * 620, 0, 100);
+  const rawMovement = totalDiff / grayFrame.length;
   const centerX = activeCells ? weightedX / activeCells / (heatmapColumns - 1) : activePosture.centerX;
   const centerY = activeCells ? weightedY / activeCells / (heatmapRows - 1) : activePosture.centerY;
   const spread = activeCells ? (maxX - minX + 1) / heatmapColumns : activePosture.spread;
+  updateBrowserCalibration(rawMovement, spread);
+  const movement = normalizeRange(rawMovement, browserCalibration.movementNoise, browserCalibration.movementNoise + 0.11);
   const previousHead = headTrace.at(-1) ?? { x: centerX, y: centerY };
   const jitter = Math.hypot(centerX - previousHead.x, centerY - previousHead.y);
   const head = clamp(100 - jitter * 520 - movement * 0.22, 0, 100);
-  const posture = clamp((spread - 0.12) * 165, 0, 100);
+  const posture = normalizeCentered(spread, browserCalibration.postureSpread, 0.22);
   const confidence = clamp(55 + movement * 0.35 + activeCells * 4, 35, 92);
 
   activePosture = { centerX, centerY, spread };
@@ -394,6 +400,52 @@ function sessionDurationSeconds(currentSession = session) {
   return (end - currentSession.startedAt) / 1000;
 }
 
+function smoothMetricSnapshot(metrics) {
+  const alpha = 0.2;
+  Object.entries(metrics).forEach(([key, value]) => {
+    smoothedMetrics[key] = smoothedMetrics[key] === undefined ? value : smoothedMetrics[key] * (1 - alpha) + value * alpha;
+  });
+  return { ...smoothedMetrics };
+}
+
+function updateBrowserCalibration(rawMovement, postureSpread) {
+  if (browserCalibration.ready) return;
+  browserCalibration.samples += 1;
+  const weight = 1 / browserCalibration.samples;
+  browserCalibration.movementNoise = browserCalibration.movementNoise * (1 - weight) + rawMovement * weight;
+  browserCalibration.postureSpread = browserCalibration.postureSpread * (1 - weight) + postureSpread * weight;
+  browserCalibration.ready = browserCalibration.samples >= 45;
+  updateCalibrationStatus();
+}
+
+function resetBrowserCalibration() {
+  browserCalibration = { movementNoise: 0, postureSpread: activePosture.spread, samples: 0, ready: false };
+  smoothedMetrics = { movement: 0, posture: 50, head: 100, confidence: 0, fps: 0 };
+  fetch("/api/calibration/reset", { method: "POST" }).catch(() => {});
+  updateCalibrationStatus();
+}
+
+function updateCalibrationStatus(serverCalibration = null) {
+  if (mode === "server" && serverCalibration) {
+    const readyCount = [serverCalibration.movementReady, serverCalibration.postureReady, serverCalibration.headReady].filter(Boolean).length;
+    calibrationStatus.textContent = `Calibration: ${readyCount}/3 server baselines ready`;
+    return;
+  }
+  calibrationStatus.textContent = browserCalibration.ready
+    ? "Calibration: browser baseline ready"
+    : `Calibration: collecting baseline ${browserCalibration.samples}/45`;
+}
+
+function normalizeRange(value, minimum, maximum) {
+  if (maximum <= minimum) return 0;
+  return clamp(((value - minimum) / (maximum - minimum)) * 100, 0, 100);
+}
+
+function normalizeCentered(value, center, halfRange) {
+  if (halfRange <= 0) return 50;
+  return clamp(50 + ((value - center) / halfRange) * 50, 0, 100);
+}
+
 function updateMetrics(metrics) {
   metricDefinitions.forEach((definition) => {
     const score = clamp(metrics[definition.key] ?? 0, 0, 100);
@@ -548,8 +600,9 @@ async function refreshServerDashboard() {
   try {
     const response = await fetch("/api/metrics", { cache: "no-store" });
     const data = await response.json();
-    currentMetrics = data.metrics;
+    currentMetrics = smoothMetricSnapshot(data.metrics);
     updateMetrics(currentMetrics);
+    updateCalibrationStatus(data.calibration);
     const history = session.active ? session.samples : data.history;
     if (session.active) captureSessionSample(currentMetrics);
     drawTimeline(history);
@@ -590,6 +643,7 @@ serverModeButton.addEventListener("click", useServerCamera);
 startSessionButton.addEventListener("click", startSession);
 stopSessionButton.addEventListener("click", stopSession);
 exportReportButton.addEventListener("click", exportReport);
+calibrateButton.addEventListener("click", resetBrowserCalibration);
 window.addEventListener("resize", () => {
   drawTimeline(session.active ? session.samples : runtimeHistory);
   drawVisualizationPanels();

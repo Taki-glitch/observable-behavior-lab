@@ -14,9 +14,11 @@ import cv2
 
 from detectors.face_detector import FaceDetector
 from detectors.pose_detector import PoseDetector
+from metrics.calibration import RollingCalibration
 from metrics.gaze import HeadStability
 from metrics.movement import MovementActivity
 from metrics.posture import PostureOpenness
+from observations.engine import ObservationEngine
 from reports.generator import generate_session_summary
 
 
@@ -31,9 +33,11 @@ class BehaviorCamera:
         self.capture = None
         self.pose_detector = None
         self.face_detector = None
-        self.movement_activity = MovementActivity()
-        self.posture_openness = PostureOpenness()
-        self.head_stability = HeadStability()
+        self.calibration = RollingCalibration()
+        self.movement_activity = MovementActivity(calibration=self.calibration)
+        self.posture_openness = PostureOpenness(calibration=self.calibration)
+        self.head_stability = HeadStability(calibration=self.calibration)
+        self.observation_engine = ObservationEngine()
         self.started_at = time.time()
         self.previous_time = time.perf_counter()
         self.frame_count = 0
@@ -125,6 +129,7 @@ class BehaviorCamera:
                 "events": list(self.events),
                 "summary": self._summary_locked(),
                 "duration": round(time.time() - self.started_at, 1),
+                "calibration": self._calibration_payload_locked(),
                 "session": self._session_payload_locked(),
             }
 
@@ -149,8 +154,19 @@ class BehaviorCamera:
             return {
                 "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "source": "server-mediapipe",
+                "calibration": self._calibration_payload_locked(),
                 **self._session_payload_locked(include_samples=True),
             }
+
+    def reset_calibration(self):
+        """Reset personal baselines and temporal smoothing."""
+        with self.lock:
+            self.calibration.reset()
+            self.movement_activity.reset()
+            self.posture_openness.reset()
+            self.head_stability.reset()
+            self.observation_engine.reset()
+            return self._calibration_payload_locked()
 
     def _calculate_fps(self):
         current_time = time.perf_counter()
@@ -188,27 +204,8 @@ class BehaviorCamera:
                 self.session["summary"] = self._session_summary_locked()
 
     def _record_observations_locked(self, metrics, timestamp):
-        if metrics["movement"] >= 65:
-            self._append_event_locked("Increased upper-body movement detected", "movement", timestamp)
-        if metrics["head"] <= 45:
-            self._append_event_locked("Reduced head stability observed", "head", timestamp)
-        if metrics["posture"] <= 35 and metrics["confidence"] >= 55:
-            self._append_event_locked("Rather closed shoulder posture observed", "posture", timestamp)
-        if metrics["confidence"] < 55:
-            self._append_event_locked("Partial landmark visibility detected", "confidence", timestamp)
-
-    def _append_event_locked(self, message, event_type, timestamp):
-        last_timestamp = self.last_event_times.get(event_type, 0.0)
-        if timestamp - last_timestamp < 5.0:
-            return
-        self.last_event_times[event_type] = timestamp
-        self.events.appendleft(
-            {
-                "time": time.strftime("%H:%M:%S", time.localtime(timestamp)),
-                "message": message,
-                "type": event_type,
-            }
-        )
+        for event in self.observation_engine.evaluate(metrics, timestamp):
+            self.events.appendleft(event)
 
     def _summary_locked(self):
         if self.frame_count == 0:
@@ -243,6 +240,16 @@ class BehaviorCamera:
             return 0.0
         stopped_at = self.session["stopped_at"] or time.time()
         return stopped_at - started_at
+
+    def _calibration_payload_locked(self):
+        return {
+            "movementReady": self.calibration.ready("movement"),
+            "postureReady": self.calibration.ready("shoulder_width"),
+            "headReady": self.calibration.ready("head_motion"),
+            "movementBaseline": round(self.calibration.baseline("movement", 0.0), 5),
+            "shoulderBaseline": round(self.calibration.baseline("shoulder_width", 0.0), 5),
+            "headBaseline": round(self.calibration.baseline("head_motion", 0.0), 5),
+        }
 
     def _session_payload_locked(self, include_samples=False):
         payload = {
@@ -305,6 +312,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/session/stop":
             self._serve_json(self.camera.stop_session())
+            return
+        if route == "/api/calibration/reset":
+            self._serve_json(self.camera.reset_calibration())
             return
         self.send_error(404, "Endpoint not found")
 
