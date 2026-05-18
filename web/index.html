@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Observable Behavior Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="dashboard-shell">
+      <header class="lab-header">
+        <div>
+          <p class="eyebrow">Behavior Analysis Dashboard</p>
+          <h1>Observable Behavior Lab</h1>
+        </div>
+        <div class="session-pill">
+          <span class="pulse"></span>
+          <span id="sessionDuration">Session 0.0s</span>
+        </div>
+      </header>
+
+      <section class="hero-grid">
+        <article class="panel video-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Live webcam</p>
+              <h2>Skeleton + FaceMesh overlay</h2>
+            </div>
+            <span class="status-badge">LIVE</span>
+          </div>
+          <div class="video-frame">
+            <img id="videoFeed" src="/video_feed" alt="Flux webcam analysé en direct" />
+            <div class="scan-line"></div>
+          </div>
+        </article>
+
+        <aside class="panel metrics-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Realtime metrics</p>
+              <h2>Scores observables</h2>
+            </div>
+            <span id="fpsBadge" class="status-badge muted">FPS --</span>
+          </div>
+          <div id="metricCards" class="metric-cards"></div>
+        </aside>
+      </section>
+
+      <section class="panel timeline-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">30 second timeline</p>
+            <h2>Évolution comportementale</h2>
+          </div>
+          <div class="legend">
+            <span class="legend-item movement">Movement</span>
+            <span class="legend-item posture">Posture</span>
+            <span class="legend-item head">Head</span>
+          </div>
+        </div>
+        <canvas id="timelineCanvas" height="230"></canvas>
+      </section>
+
+      <section class="bottom-grid">
+        <article class="panel observations-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Observation log</p>
+              <h2>Journal d'événements</h2>
+            </div>
+          </div>
+          <div id="eventLog" class="event-log empty">En attente des premiers signaux observables...</div>
+        </article>
+
+        <article class="panel summary-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Automatic report</p>
+              <h2>Session Summary</h2>
+            </div>
+          </div>
+          <pre id="sessionSummary">Initialisation du rapport...</pre>
+        </article>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
